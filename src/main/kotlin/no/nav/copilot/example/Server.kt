@@ -5,6 +5,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.createApplicationPlugin
 import io.ktor.server.application.install
+import io.ktor.server.plugins.doublereceive.DoubleReceive
 import io.ktor.server.request.header
 import io.ktor.server.request.path
 import io.ktor.server.response.header
@@ -65,6 +66,7 @@ private fun authPlugin(texas: Texas) = createApplicationPlugin("NavAuth") {
             is AuthResult.Ok -> {
                 call.attributes.put(NavIdentKey, r.navIdent)
                 call.attributes.put(TokenKey, token)
+                handleModern(call)
             }
             AuthResult.Unauthorized -> {
                 call.response.header(HttpHeaders.WWWAuthenticate, "Bearer error=\"invalid_token\"")
@@ -83,6 +85,7 @@ fun Application.module(
     http: HttpClient = defaultHttpClient(),
 ) {
     val metrics = ToolMetrics(setOf(TOOL))
+    install(DoubleReceive) // handleModern reads the body, the SDK reads it again
     install(authPlugin(texas))
     routing {
         get("/health") { call.respondText("ok") }

@@ -154,4 +154,52 @@ class ServerTest {
         val dup = raw.dropLast(1) + "," + """{"name":"dev-gcp:copilot:fleet-gateway","clientId":"gw-2"}]"""
         assertEquals("", extractGatewayClientId(dup, "dev-gcp"))
     }
+
+    private fun modern(url: String, body: String, vararg h: Pair<String, String>): HttpResponse<String> {
+        val rb = HttpRequest.newBuilder(URI.create("$url/mcp")).POST(HttpRequest.BodyPublishers.ofString(body))
+            .header("Content-Type", "application/json").header("Accept", "application/json")
+            .header("Authorization", "Bearer $USER_TOKEN")
+        h.forEach { rb.header(it.first, it.second) }
+        return http.send(rb.build(), HttpResponse.BodyHandlers.ofString())
+    }
+
+    private fun body(method: String, id: String = "1", version: String = MODERN_VERSION) =
+        """{"jsonrpc":"2.0","id":$id,"method":"$method","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"$version"}}}"""
+
+    @Test
+    fun `2026 protocol checks answer before the SDK`() {
+        claims[USER_TOKEN] = user()
+        val url = start()
+        val ok = arrayOf("MCP-Protocol-Version" to MODERN_VERSION, "Mcp-Method" to "tools/list")
+        val d = modern(url, body("server/discover"), "MCP-Protocol-Version" to MODERN_VERSION, "Mcp-Method" to "server/discover")
+        assertEquals(200, d.statusCode(), d.body())
+        assertTrue(d.body().contains("\"supportedVersions\":[\"$MODERN_VERSION\"]") && d.body().contains("serverInfo"), d.body())
+
+        fun code(r: HttpResponse<String>, status: Int, rpc: Int) {
+            assertEquals(status, r.statusCode(), r.body()); assertTrue(r.body().contains("\"code\":$rpc"), r.body())
+        }
+        code(modern(url, body("tools/list"), "Mcp-Method" to "tools/list"), 400, -32020) // no version header
+        code(modern(url, body("tools/list", version = "2099-01-01"), "MCP-Protocol-Version" to "2099-01-01", "Mcp-Method" to "tools/list"), 400, -32022)
+        code(modern(url, body("tools/list"), "MCP-Protocol-Version" to MODERN_VERSION, "Mcp-Method" to "tools/call"), 400, -32020)
+        code(modern(url, body("tools/list", version = "2025-06-18"), *ok), 400, -32020)
+        val callBody = body("tools/call").replace("\"params\":{", "\"params\":{\"name\":\"$TOOL\",")
+        code(modern(url, callBody, "MCP-Protocol-Version" to MODERN_VERSION, "Mcp-Method" to "tools/call", "Mcp-Name" to "other"), 400, -32020)
+        code(modern(url, """{"jsonrpc":"2.0","id":1}""", "MCP-Protocol-Version" to MODERN_VERSION), 400, -32600)
+        code(modern(url, """{"jsonrpc":"2.0","id":null,"method":"tools/list"}""", *ok), 400, -32600)
+    }
+
+    @Test
+    fun `GET and DELETE are 405 with Allow POST once authenticated`() {
+        claims[USER_TOKEN] = user()
+        val url = start()
+        for (m in listOf("GET", "DELETE")) {
+            val r = http.send(
+                HttpRequest.newBuilder(URI.create("$url$MCP_PATH")).method(m, HttpRequest.BodyPublishers.noBody())
+                    .header("Authorization", "Bearer $USER_TOKEN").build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+            assertEquals(405, r.statusCode(), m)
+            assertEquals("POST", r.headers().firstValue("Allow").orElse(""), m)
+        }
+    }
 }
