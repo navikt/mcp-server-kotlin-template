@@ -15,3 +15,18 @@ jobs:
           distribution: temurin
           java-version: "21"
       - run: ./gradlew test --no-daemon
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.26"
+          cache: false
+      - run: GOBIN="$RUNNER_TEMP/bin" go install github.com/navikt/copilot/cli/mcp-compliance@221f469b8e9fdb248ab59c959f4b4840941a49f1
+      # Fake Texas (scripts/fake_texas.py) runs only here; production code has no switch for it.
+      - run: scripts/compliance.sh "$RUNNER_TEMP/bin/mcp-compliance"
